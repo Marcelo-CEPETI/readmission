@@ -1,0 +1,1 @@
+This is a Master's thesis, in which the aim is to estimate the probability of readmission in ranges of patients admitted to intensive care unit beds. The model has moderate discrimination, with good clinical stratification capacity. It has good calibration, with an approximate mean absolute error of 0.004 in the internal validation by bootstrap.
