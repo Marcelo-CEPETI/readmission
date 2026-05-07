@@ -1,0 +1,532 @@
+# Titulo: ESTABELECIMENTO DE SISTEMA DE SUPORTE A DECISÃO CLÍNICA NA PREDIÇÃO
+# DE READMISSÃO NÃO PLANEJADA EM UTI
+
+library(ggplot2)
+library(tidyverse)
+library(gtsummary)
+library(scales)
+
+# Objetivo: Descrever os dados em uma tabela inicial
+
+# Dados
+dados <- readxl::read_xlsx("V2_Transversal v1_maio_08.xlsx",sheet = "Dados")
+
+# Descrição
+dados <- dados |> 
+  mutate(fragilidade_number = as.numeric(fragilidade)) |> 
+  mutate(grupo = factor(`Reinternamento_7d=1_reinternamento_24h=2_alta_primeiro_int=3_óbito_primeiro=4`,
+                               levels= c(1,2,3,4),
+                               labels = c("Reinternamento em 7 dias","Reinternamento em 24h",
+                                          "Alta no 1º internamento", "Óbito no 1º internamento")),
+         readmissao = factor(`Reinternamento=1_alta_primeiro_int=2_óbito_primeiro=3`,
+                             levels = c(1,2,3),
+                             labels = c("Readmissão",
+                                        "Alta no 1º internamento", "Óbito no 1º internamento"))) |> 
+  mutate(motivo_dx = factor(`Dx principal adm (neuro=1; resp=2; cardio=3; abdo=4; metabó=5; renal=6; hemato=7; sepse=8; trauma=9; orto=10; GO=11; intox=12, TAGouTDM=13)`,
+                              levels = c(1,2,3,4,5,6,7,8,9,10,11,12,13),
+                              labels = c("Neurologíco",
+                                         "Respiratório",
+                                         "Cardiológico",
+                                         "Abdominal",
+                                         "Endocrino/Metabólico",
+                                         "Renal",
+                                         "Hematológico",
+                                         "Sepse",
+                                         "Trauma",
+                                         "Ortopedia",
+                                         "Ginecologia/Obstetrícia",
+                                         "Intoxicação Exogena",
+                                         "TAG/TDM")))
+descritiva <- dados |> 
+  select(grupo,
+         sexo,
+         `Idade (anos)`,
+         comorbidade,
+         convenio,
+         fragilidade_number,
+         motivo_dx,
+         #prioridade_atendimento,
+         tipo_de_internamento,
+         apache,
+         procedencia,
+         sofa,
+         Uso_VM,
+         Uso_dva,
+         sav_admissao,
+         #Diabetes,
+         #Has,
+         #AVC_Prévio,
+         #DPOC,
+         TSR,
+         TQT,
+         infeccao_bacteriana,
+         IRA,
+         #desfecho_uti,
+         morbidade_alta,
+         sav_desfecho,
+         tempo_internamento,
+         Tempo_faixa,
+         ultimo_sofa,
+         readmissao
+         )
+
+descritiva |> 
+  #filter(grupo %in% c("Reinternamento em 7 dias", "Reinternamento em 24h")) |>
+  filter(grupo != "Óbito no 1º internamento") |>
+  droplevels() |>
+  drop_na(grupo) |> 
+  tbl_summary(by=grupo,
+              missing = "no",
+              type = list(fragilidade_number ~ "continuous"),
+              statistic = list(
+                all_continuous() ~ "{mean} ± {sd} - {median} ({p25}, {p75})",
+                all_categorical() ~ "{n} ({p}%)"
+              ),
+              label = list(
+                sexo ~ "Sexo Masculino",
+                `Idade (anos)` ~ "Idade (anos)",
+                procedencia ~ "Procedência",
+                convenio ~ "SUS como fonte pagadora",
+                #prioridade_atendimento ~ "Prioridade de atendimento",
+                tipo_de_internamento ~ "Tipo de internamento",
+                Uso_dva ~ "Uso de DVA",
+                Uso_VM ~ "Uso de VM",
+                #sav_admissao ~ "Limitação de Suporte Terapêutico (LST) - Admissão",
+                fragilidade_number ~ "Fragilidade (pela ECF)",
+                comorbidade ~ "Pelo menos uma comorbidade",
+                #AVC_Prévio ~ "AVC Prévio",
+                apache ~ "APACHE II",
+                sofa ~ "SOFA",
+                infeccao_bacteriana ~ "Infecção Bacteriana",
+                #desfecho_uti ~ "Mortalidade na UTI",
+                morbidade_alta ~ "Morbidade na Alta",
+                #sav_desfecho ~ "Limitação de Suporte Terapêutico (LST) - Desfecho",
+                tempo_internamento ~ "Tempo de internamento (dias)",
+                Tempo_faixa ~ "Faixa de tempo de internamento",
+                motivo_dx ~ "Motivo de internamento"
+              )) |> 
+  add_p(
+    test = list(
+      procedencia ~ "chisq.test"
+    )
+  )
+
+# Garantir que grupo e morbidade_alta são fatores
+descritiva_morb <- descritiva |> 
+  filter(!is.na(morbidade_alta)) |>
+  filter(grupo != "Óbito no 1º internamento") |> 
+  mutate(
+    grupo = factor(grupo),
+    morbidade_alta = factor(morbidade_alta)
+  )
+
+# Obter os níveis
+grupos <- levels(descritiva_morb$grupo)
+
+# Comparações par a par
+# Comparações par a par com limpeza automática
+resultados_morb <- list()
+
+for (comb in combn(grupos, 2, simplify = FALSE)) {
+  dados_sub <- descritiva |>
+    filter(grupo %in% comb, !is.na(morbidade_alta)) |>
+    mutate(
+      grupo = droplevels(factor(grupo)),
+      morbidade_alta = droplevels(factor(morbidade_alta))
+    )
+  
+  tab <- table(dados_sub$grupo, dados_sub$morbidade_alta)
+  
+  # Remove colunas (níveis) com total zero
+  tab <- tab[, colSums(tab) > 0, drop = FALSE]
+  
+  print(paste("Comparação:", paste(comb, collapse = " vs ")))
+  print(tab)
+  
+  if (ncol(tab) >= 2 && nrow(tab) == 2) {
+    teste <- tryCatch({
+      chisq.test(tab)$p.value
+    }, error = function(e) NA)
+  } else {
+    teste <- NA
+  }
+  
+  resultados_morb[[paste(comb, collapse = " vs ")]] <- teste
+}
+
+tibble::tibble(
+  Comparação = names(resultados_morb),
+  `p-valor (Qui-quadrado)` = unlist(resultados_morb)
+)
+
+
+
+# Garantir que grupo e Tempo_faixa são fatores
+descritiva_tempo <- descritiva |> 
+  filter(!is.na(Tempo_faixa)) |>
+  filter(grupo != "Óbito no 1º internamento") |> 
+  mutate(
+    grupo = factor(grupo),
+    Tempo_faixa = factor(Tempo_faixa)
+  )
+
+# Obter os níveis
+grupos <- levels(descritiva_tempo$grupo)
+
+# Comparações par a par
+# Comparações par a par com limpeza automática
+resultados_temp <- list()
+
+for (comb in combn(grupos, 2, simplify = FALSE)) {
+  dados_sub <- descritiva |>
+    filter(grupo %in% comb, !is.na(Tempo_faixa)) |>
+    mutate(
+      grupo = droplevels(factor(grupo)),
+      Tempo_faixa = droplevels(factor(Tempo_faixa))
+    )
+  
+  tab <- table(dados_sub$grupo, dados_sub$Tempo_faixa)
+  
+  # Remove colunas (níveis) com total zero
+  tab <- tab[, colSums(tab) > 0, drop = FALSE]
+  
+  print(paste("Comparação:", paste(comb, collapse = " vs ")))
+  print(tab)
+  
+  if (ncol(tab) >= 2 && nrow(tab) == 2) {
+    teste <- tryCatch({
+      chisq.test(tab)$p.value
+    }, error = function(e) NA)
+  } else {
+    teste <- NA
+  }
+  
+  resultados_temp[[paste(comb, collapse = " vs ")]] <- teste
+}
+
+tibble::tibble(
+  Comparação = names(resultados_temp),
+  `p-valor (Qui-quadrado)` = unlist(resultados_temp)
+)
+
+
+table(chisq.test(descritiva$grupo,descritiva$procedencia)$expected)
+
+## Readmissão geral
+
+descritiva |> 
+  filter(readmissao != "Óbito no 1º internamento") |>
+  droplevels() |>
+  drop_na(grupo) |> 
+  tbl_summary(by=readmissao,
+              missing = "no",
+              type = list(fragilidade_number ~ "continuous"),
+              statistic = list(
+                all_continuous() ~ "{mean} ± {sd} - {median} ({p25}, {p75})",
+                all_categorical() ~ "{n} ({p}%)"
+              ),
+              label = list(
+                sexo ~ "Sexo Masculino",
+                `Idade (anos)` ~ "Idade (anos)",
+                procedencia ~ "Procedência",
+                convenio ~ "SUS como fonte pagadora",
+                #prioridade_atendimento ~ "Prioridade de atendimento",
+                tipo_de_internamento ~ "Tipo de internamento",
+                Uso_dva ~ "Uso de DVA",
+                Uso_VM ~ "Uso de VM",
+                sav_admissao ~ "Limitação de Suporte Terapêutico (LST) - Admissão",
+                fragilidade_number ~ "Fragilidade (pela ECF)",
+                comorbidade ~ "Pelo menos uma comorbidade",
+                #AVC_Prévio ~ "AVC Prévio",
+                apache ~ "APACHE II",
+                sofa ~ "SOFA",
+                infeccao_bacteriana ~ "Infecção Bacteriana",
+                #desfecho_uti ~ "Mortalidade na UTI",
+                morbidade_alta ~ "Morbidade na Alta",
+                sav_desfecho ~ "Limitação de Suporte Terapêutico (LST) - Desfecho",
+                tempo_internamento ~ "Tempo de internamento (dias)",
+                Tempo_faixa ~ "Faixa de tempo de internamento",
+                motivo_dx ~ "Motivo de internamento",
+                ultimo_sofa ~ "Último SOFA do internamento"
+              )) |> 
+  add_p()
+
+
+### Readmissões vs readmissoes
+
+## Readmissão geral
+
+descritiva |> 
+  filter(readmissao != "Óbito no 1º internamento") |>
+  filter(readmissao != "Alta no 1º internamento") |>
+  droplevels() |>
+  drop_na(grupo) |> 
+  tbl_summary(by=grupo,
+              missing = "no",
+              type = list(fragilidade_number ~ "continuous"),
+              statistic = list(
+                all_continuous() ~ "{mean} ± {sd} - {median} ({p25}, {p75})",
+                all_categorical() ~ "{n} ({p}%)"
+              ),
+              label = list(
+                sexo ~ "Sexo Masculino",
+                `Idade (anos)` ~ "Idade (anos)",
+                procedencia ~ "Procedência",
+                convenio ~ "SUS como fonte pagadora",
+                #prioridade_atendimento ~ "Prioridade de atendimento",
+                tipo_de_internamento ~ "Tipo de internamento",
+                Uso_dva ~ "Uso de DVA",
+                Uso_VM ~ "Uso de VM",
+                sav_admissao ~ "Limitação de Suporte Terapêutico (LST) - Admissão",
+                fragilidade_number ~ "Fragilidade (pela ECF)",
+                comorbidade ~ "Pelo menos uma comorbidade",
+                #AVC_Prévio ~ "AVC Prévio",
+                apache ~ "APACHE II",
+                sofa ~ "SOFA",
+                infeccao_bacteriana ~ "Infecção Bacteriana",
+                #desfecho_uti ~ "Mortalidade na UTI",
+                morbidade_alta ~ "Morbidade na Alta",
+                sav_desfecho ~ "Limitação de Suporte Terapêutico (LST) - Desfecho",
+                tempo_internamento ~ "Tempo de internamento (dias)",
+                Tempo_faixa ~ "Faixa de tempo de internamento",
+                motivo_dx ~ "Motivo de internamento",
+                ultimo_sofa ~ "Último SOFA do internamento"
+              )) |> 
+  add_p()
+
+
+# Etapa de modelagem
+
+## Modelo bruto
+
+dados_model <- descritiva |> 
+  filter(readmissao != "Óbito no 1º internamento")
+
+dados_model2 <- dados_model |>
+  filter(readmissao %in% c("Readmissão", "Alta no 1º internamento")) |>
+  mutate(
+    readm_bin = ifelse(readmissao == "Readmissão", 1, 0)
+  )
+
+model_bruto <- glm(
+  readm_bin ~ `Idade (anos)` + 
+    sexo + 
+    fragilidade_number + 
+    sofa +
+    procedencia + 
+    tipo_de_internamento + 
+    convenio,
+  family = binomial,
+  data = dados_model2
+)
+
+tbl_regression(model_bruto, exponentiate = TRUE)
+
+dados_auc <- model.frame(model_bruto)
+prob_auc <- fitted(model_bruto)
+
+library(pROC)
+
+roc_obj <- roc(
+  response = model.frame(model_bruto)$readm_bin,
+  predictor = fitted(model_bruto)
+)
+
+auc(roc_obj)
+
+plot(roc_obj, col = "blue", main = "Curva ROC - Modelo de Admissão")
+coords(roc_obj, "best", ret = c("threshold", "sensitivity", "specificity"))
+
+library(rms)
+
+model_rms <- lrm(
+  readm_bin ~ `Idade (anos)` + sexo + fragilidade_number + sofa +
+    procedencia + tipo_de_internamento + convenio,
+  data = dados_auc,
+  x = TRUE,
+  y = TRUE
+)
+
+cal <- calibrate(model_rms, method = "boot", B = 200)
+plot(cal)
+### O modelo apresentou excelente calibração, com erro absoluto médio de 0,004 após validação interna por bootstrap.
+
+# probabilidades e estratos de risco
+dados_auc$prob <- predict(model_bruto, type = "response")
+
+dados_auc$risco <- ifelse(
+  dados_auc$prob < 0.05, "Baixo risco",
+  ifelse(dados_auc$prob < 0.10, "Risco intermediário", "Alto risco")
+)
+
+table(dados_auc$risco, dados_auc$readm_bin)
+prop.table(table(dados_auc$risco, dados_auc$readm_bin), 1)
+
+## Gráfico de estratificação
+
+grafico_risco <- dados_auc |>
+  group_by(risco) |>
+  summarise(
+    n = n(),
+    n_readm = sum(readm_bin == 1),
+    taxa_readm = mean(readm_bin == 1)
+  ) |>
+  mutate(
+    risco = factor(risco, levels = c("Baixo risco", "Risco intermediário", "Alto risco"))
+  )
+
+grafico_risco
+
+ggplot(grafico_risco, aes(x = risco, y = taxa_readm)) +
+  geom_col(width = 0.65) +
+  geom_text(
+    aes(label = paste0(
+      percent(taxa_readm, accuracy = 0.1),
+      "\n(n=", n_readm, "/", n, ")"
+    )),
+    vjust = -0.5,
+    size = 4.5
+  ) +
+  scale_y_continuous(
+    labels = percent_format(accuracy = 1),
+    limits = c(0, max(grafico_risco$taxa_readm) + 0.05)
+  ) +
+  labs(
+    title = "Taxa de readmissão segundo estratificação de risco",
+    subtitle = "Classificação baseada na probabilidade prevista pelo modelo",
+    x = "Faixa de risco",
+    y = "Taxa de readmissão"
+  ) +
+  theme_minimal(base_size = 14)
+
+## A estratificação baseada no modelo permitiu identificar três grupos de risco distintos, 
+## com taxas de readmissão de 4,3%, 7,6% e 11,6% nos grupos de baixo, intermediário e alto risco, respectivamente.
+
+
+## Bootstrap para validação
+
+validate(model_rms, method = "boot", B = 200)
+
+## Modelos secundarios
+
+model_2 <-
+  glm(
+    readmissao ~ `Idade (anos)` + 
+      sexo + 
+      comorbidade + 
+      fragilidade_number +
+      apache + 
+      #ultimo_sofa + 
+      procedencia + 
+      tipo_de_internamento +
+      motivo_dx + 
+      convenio,
+    family = binomial,
+    data = dados_model
+  )
+
+tbl_regression(model_bruto, exponentiate = TRUE)
+
+model_3 <-
+  glm(
+    readmissao ~ `Idade (anos)` + 
+      sexo + 
+      comorbidade + 
+      fragilidade_number +
+      #apache + 
+      ultimo_sofa + 
+      procedencia + 
+      tipo_de_internamento +
+      #motivo_dx + 
+      convenio,
+    family = binomial,
+    data = dados_model
+  )
+
+tbl_regression(model_bruto, exponentiate = TRUE)
+
+## Modelo alternativo
+
+model_alta <- glm(
+  readm_bin ~ 
+    `Idade (anos)` +
+    sexo +
+    fragilidade_number +
+    ultimo_sofa +
+    tempo_internamento +
+    procedencia +
+    tipo_de_internamento +
+    convenio,
+  family = binomial,
+  data = dados_model2
+)
+
+tbl_regression(model_alta, exponentiate = TRUE)
+
+dados_auc2 <- model.frame(model_alta)
+prob_auc2 <- fitted(model_alta)
+
+roc_obj2 <- roc(
+  response = model.frame(model_alta)$readm_bin,
+  predictor = fitted(model_alta)
+)
+
+auc(roc_obj2)
+
+
+dados_model2 <- dados_model2 |> 
+  mutate(delta_sofa = ultimo_sofa - sofa)
+
+model_delta <- glm(
+  readm_bin ~ 
+    `Idade (anos)` +
+    sexo +
+    fragilidade_number +
+    delta_sofa +
+    tempo_internamento +
+    procedencia +
+    tipo_de_internamento +
+    convenio,
+  family = binomial,
+  data = dados_model2
+)
+
+tbl_regression(model_delta, exponentiate = TRUE)
+
+model_mix <- glm(
+  readm_bin ~ 
+    `Idade (anos)` +
+    sexo +
+    fragilidade_number +
+    sofa +
+    ultimo_sofa +
+    tempo_internamento +
+    procedencia +
+    tipo_de_internamento +
+    convenio,
+  family = binomial,
+  data = dados_model2
+)
+
+
+tbl_regression(model_mix, exponentiate = TRUE)
+
+library(performance)
+
+r2(model_bruto)
+r2(model_alta)
+r2(model_delta)
+r2(model_mix)
+
+AIC(model_bruto, model_alta, model_delta, model_mix)
+
+roc(model.frame(model_alta)$readm_bin,
+    fitted(model_alta))
+
+roc(model.frame(model_bruto)$readm_bin,
+    fitted(model_bruto))
+
+mean((dados_auc$readm_bin - dados_auc$prob)^2)
+
+saveRDS(model_bruto, "modelo_readmissao_admissao.rds")
+
